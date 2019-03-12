@@ -4,6 +4,7 @@ import gensim
 import numpy as np
 import jsonlines
 import pickle
+from random import shuffle
 
 # Defining constants
 batch_size = 100
@@ -42,21 +43,15 @@ class Dataset:
             if label_text == '-':
                 continue
 
-            count = 0
             for word in sample.get("sentence1").strip(".").split():
                 if word in word_dict:
                     sentence1 += word_dict[word]
-                    count += 1
-                if not count == 0:
-                    sentence1 /= count
+            sentence1 /= 100
 
-            count = 0
             for word in sample.get("sentence2").strip(".").split():
                 if word in word_dict:
                     sentence2 += word_dict[word]
-                    count += 1
-                if not count == 0:
-                    sentence2 /= count
+            sentence2 /= 100
 
             inputs_p.append(sentence1)
             inputs_h.append(sentence2)
@@ -78,11 +73,11 @@ class Dataset:
 
 
 # tf Graph Input
-x = tf.placeholder(tf.float32, [None, 2 * embedding_dim], name="input")
-y = tf.placeholder(tf.int32, [None, class_num], name="label")
+x = tf.placeholder(tf.float32, [None, 2 * embedding_dim])
+y = tf.placeholder(tf.int32, [None, class_num])
 
 # Set model weights
-W = tf.Variable(tf.random_normal([2 * embedding_dim, class_num], name="weight"))
+W = tf.Variable(tf.random_normal([2 * embedding_dim, class_num], name="weights"))
 b = tf.Variable(tf.random_normal([class_num]), name="bias")
 
 # Prediction
@@ -141,9 +136,15 @@ for epoch_i in range(epochs):
     # if epoch_i % 10 == 0:
     #     saver.save(sess, "./model/trial" + str(epoch_i) + ".ckpt")
 
+# Saving variables
+np.save('weights', sess.run(tf.trainable_variables()[0]))
+np.save('bias', sess.run(tf.trainable_variables()[1]))
+
 
 # Recording uncertainty with index
-uncertainty_list = list()
+uncertainty_list_0 = list()
+uncertainty_list_1 = list()
+uncertainty_list_2 = list()
 data = Dataset(train_data_file_name)
 for index in range(train_size):
     input_p, input_h, label = data.next_batch(1)
@@ -152,15 +153,39 @@ for index in range(train_size):
     predictions = predictions.reshape(class_num, 1)
     class_index = label.argmax()
     uncertainty = 1 - predictions[class_index, 0]
-    uncertainty_list.append((index, uncertainty))
+    if label[0][0] == 1:
+        uncertainty_list_0.append((index, uncertainty))
+    elif label[0][1] == 1:
+        uncertainty_list_1.append((index, uncertainty))
+    elif label[0][2] == 1:
+        uncertainty_list_2.append((index, uncertainty))
+    else:
+        print("The data has no label!")
 
 # Sort according to uncertainty
-uncertainty_list.sort(key=lambda t: t[1], reverse=True)
+uncertainty_list_0.sort(key=lambda t: t[1], reverse=True)
+uncertainty_list_1.sort(key=lambda t: t[1], reverse=True)
+uncertainty_list_2.sort(key=lambda t: t[1], reverse=True)
 
 # Divide list
-test_list = uncertainty_list[0: test_size]
-dev_list = uncertainty_list[test_size: dev_size + test_size]
-train_list = uncertainty_list[dev_size + test_size:]
+div_point_1 = test_size // 3
+div_point_2 = test_size // 3 * 2
+
+test_list = list(uncertainty_list_0[0: div_point_1])
+test_list.extend(uncertainty_list_1[0: div_point_1])
+test_list.extend(uncertainty_list_2[0: div_point_1])
+shuffle(test_list)
+
+dev_list = list(uncertainty_list_0[div_point_1: div_point_2])
+dev_list.extend(uncertainty_list_1[div_point_1: div_point_2])
+dev_list.extend(uncertainty_list_2[div_point_1: div_point_2])
+shuffle(dev_list)
+
+train_list = list(uncertainty_list_0[div_point_2:])
+train_list.extend(uncertainty_list_1[div_point_2:])
+train_list.extend(uncertainty_list_2[div_point_2:])
+shuffle(train_list)
+
 
 lists = dict()
 lists["test_list"] = test_list
